@@ -95,6 +95,10 @@ function ActivityLogPanel({ onClose }) {
 function UserManagementPanel({ onClose }) {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [newUser, setNewUser] = useState({ email: '', password: '', role: 'viewer' })
+  const [formError, setFormError] = useState('')
+  const [formSuccess, setFormSuccess] = useState('')
 
   useEffect(() => { fetchUsers() }, [])
 
@@ -109,29 +113,109 @@ function UserManagementPanel({ onClose }) {
     setUsers(prev => prev.map(u => u.id === id ? { ...u, role } : u))
   }
 
+  const handleDeleteUser = async (userId, id) => {
+    await supabase.from('user_roles').delete().eq('id', id)
+    setUsers(prev => prev.filter(u => u.id !== id))
+  }
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault()
+    setFormError('')
+    setFormSuccess('')
+    if (!newUser.email.trim() || !newUser.password.trim()) {
+      setFormError('Email and password are required')
+      return
+    }
+    if (newUser.password.length < 6) {
+      setFormError('Password must be at least 6 characters')
+      return
+    }
+    setCreating(true)
+    const { data, error } = await supabase.functions.invoke('create-user', {
+      body: { email: newUser.email.trim(), password: newUser.password, role: newUser.role }
+    })
+    if (error || data?.error) {
+      setFormError(data?.error ?? error.message)
+    } else {
+      setFormSuccess(`${newUser.email} created successfully`)
+      setNewUser({ email: '', password: '', role: 'viewer' })
+      fetchUsers()
+    }
+    setCreating(false)
+  }
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40 p-4">
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-lg flex flex-col max-h-[80vh]">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-lg flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold text-slate-800">User Management</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
-          {loading && <p className="text-sm text-slate-400 text-center">Loading...</p>}
-          {users.map(u => (
-            <div key={u.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
-              <p className="text-sm text-slate-700 truncate flex-1">{u.email}</p>
-              <select value={u.role} onChange={e => handleRoleChange(u.id, e.target.value)}
-                className="ml-3 px-2 py-1 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+
+        {/* Create user form */}
+        <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
+          <p className="text-xs font-medium text-slate-600 mb-3 uppercase tracking-wide">Create New User</p>
+          <form onSubmit={handleCreateUser} className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input
+                type="email"
+                placeholder="Email address"
+                value={newUser.email}
+                onChange={e => setNewUser(prev => ({ ...prev, email: e.target.value }))}
+                className="px-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              />
+              <input
+                type="password"
+                placeholder="Password (min 6 chars)"
+                value={newUser.password}
+                onChange={e => setNewUser(prev => ({ ...prev, password: e.target.value }))}
+                className="px-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              />
+            </div>
+            <div className="flex gap-3 items-center">
+              <select
+                value={newUser.role}
+                onChange={e => setNewUser(prev => ({ ...prev, role: e.target.value }))}
+                className="px-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              >
                 <option value="admin">Admin</option>
                 <option value="reviewer">Reviewer</option>
                 <option value="viewer">Viewer</option>
               </select>
+              <button type="submit" disabled={creating}
+                className="flex-1 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-all">
+                {creating ? 'Creating...' : 'Create User'}
+              </button>
+            </div>
+            {formError && <p className="text-xs text-red-500">{formError}</p>}
+            {formSuccess && <p className="text-xs text-green-600">{formSuccess}</p>}
+          </form>
+        </div>
+
+        {/* Existing users */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+          <p className="text-xs font-medium text-slate-600 uppercase tracking-wide mb-3">Existing Users</p>
+          {loading && <p className="text-sm text-slate-400 text-center">Loading...</p>}
+          {!loading && users.length === 0 && <p className="text-sm text-slate-400 text-center py-4">No users yet.</p>}
+          {users.map(u => (
+            <div key={u.id} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
+              <p className="text-sm text-slate-700 truncate flex-1">{u.email}</p>
+              <select value={u.role} onChange={e => handleRoleChange(u.id, e.target.value)}
+                className="px-2 py-1 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="admin">Admin</option>
+                <option value="reviewer">Reviewer</option>
+                <option value="viewer">Viewer</option>
+              </select>
+              <button onClick={() => handleDeleteUser(u.user_id, u.id)}
+                className="text-slate-300 hover:text-red-400 transition-colors shrink-0">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              </button>
             </div>
           ))}
         </div>
+
         <div className="px-5 py-3 border-t border-slate-100">
           <p className="text-xs text-slate-400">Admin: full access · Reviewer: approve/decline · Viewer: read only</p>
         </div>
