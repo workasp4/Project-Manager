@@ -141,7 +141,7 @@ function UserManagementPanel({ onClose }) {
 }
 
 // ── Comments Panel ────────────────────────────────────────────────────────────
-function CommentsPanel({ project, currentUser, onClose }) {
+function CommentsPanel({ project, currentUser, userRole, onClose }) {
   const [comments, setComments] = useState([])
   const [body, setBody] = useState('')
   const [loading, setLoading] = useState(true)
@@ -162,6 +162,11 @@ function CommentsPanel({ project, currentUser, onClose }) {
     const { data } = await supabase.from('comments').select('*').eq('project_id', project.id).order('created_at', { ascending: true })
     setComments(data ?? [])
     setLoading(false)
+  }
+
+  const handleDelete = async (commentId) => {
+    await supabase.from('comments').delete().eq('id', commentId)
+    setComments(prev => prev.filter(c => c.id !== commentId))
   }
 
   const handleSend = async (e) => {
@@ -189,7 +194,14 @@ function CommentsPanel({ project, currentUser, onClose }) {
           {comments.map(c => (
             <div key={c.id} className={`flex flex-col ${c.user_email === currentUser ? 'items-end' : 'items-start'}`}>
               <div className={`max-w-[80%] px-3 py-2 rounded-xl text-sm ${c.user_email === currentUser ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-800'}`}>{c.body}</div>
-              <span className="text-xs text-slate-400 mt-1">{c.user_email} · {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs text-slate-400">{c.user_email} · {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                {(userRole === 'admin' || c.user_email === currentUser) && (
+                  <button onClick={() => handleDelete(c.id)} className="text-xs text-slate-300 hover:text-red-400 transition-colors">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           <div ref={bottomRef} />
@@ -290,7 +302,7 @@ function StatsBar({ projects }) {
 function App() {
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
-  const [userRole, setUserRole] = useState('viewer')
+  const [userRole, setUserRole] = useState('admin') // default to admin until role is fetched
   const [projects, setProjects] = useState([])
   const [newProject, setNewProject] = useState({ name: '', type: 'Image' })
   const [selectedFile, setSelectedFile] = useState(null)
@@ -466,31 +478,33 @@ function App() {
     <div className="min-h-screen bg-slate-50 p-4 md:p-6">
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       {declineTarget && <DeclineModal onConfirm={handleDeclineConfirm} onCancel={() => setDeclineTarget(null)} />}
-      {commentProject && <CommentsPanel project={commentProject} currentUser={session.user.email} onClose={() => setCommentProject(null)} />}
+      {commentProject && <CommentsPanel project={commentProject} currentUser={session.user.email} userRole={userRole} onClose={() => setCommentProject(null)} />}
       {lightboxProject && <Lightbox project={lightboxProject} onClose={() => setLightboxProject(null)} />}
       {showActivityLog && <ActivityLogPanel onClose={() => setShowActivityLog(false)} />}
       {showUserMgmt && <UserManagementPanel onClose={() => setShowUserMgmt(false)} />}
 
       <div className="max-w-5xl mx-auto">
-        <header className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-slate-800">Project Tracker</h1>
-            <p className="text-slate-500 mt-1">Manage and track your media projects</p>
+        <header className="mb-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-semibold text-slate-800">Project Tracker</h1>
+              <p className="text-slate-500 mt-0.5 text-sm hidden sm:block">Manage and track your media projects</p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <RoleBadge role={userRole} />
+              <button onClick={() => setShowActivityLog(true)} className="px-2.5 py-1.5 text-xs sm:text-sm font-medium text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100 transition-all">Activity</button>
+              {isAdmin && <button onClick={() => setShowUserMgmt(true)} className="px-2.5 py-1.5 text-xs sm:text-sm font-medium text-purple-600 border border-purple-300 rounded-lg hover:bg-purple-50 transition-all">Users</button>}
+              <button onClick={handleLogout} className="px-2.5 py-1.5 text-xs sm:text-sm font-medium text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100 transition-all">Logout</button>
+            </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            <RoleBadge role={userRole} />
-            <span className="text-sm text-slate-500 hidden sm:inline">Hi, <span className="font-medium text-slate-700">{session.user.email}</span></span>
-            <button onClick={() => setShowActivityLog(true)} className="px-3 py-2 text-sm font-medium text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100 transition-all">Activity</button>
-            {isAdmin && <button onClick={() => setShowUserMgmt(true)} className="px-3 py-2 text-sm font-medium text-purple-600 border border-purple-300 rounded-lg hover:bg-purple-50 transition-all">Users</button>}
-            <button onClick={handleLogout} className="px-3 py-2 text-sm font-medium text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100 transition-all">Logout</button>
-          </div>
+          <p className="text-xs text-slate-400 mt-1 sm:hidden">{session.user.email}</p>
         </header>
 
         <StatsBar projects={projects} />
 
         {/* Add Project Form — all roles can submit */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5 mb-6">
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-end">
             <div className="md:col-span-1">
               <label className="block text-sm font-medium text-slate-700 mb-1.5">Project Name</label>
               <input type="text" name="name" value={newProject.name} onChange={handleInputChange} placeholder="Enter project name"
@@ -541,9 +555,49 @@ function App() {
           </div>
         </div>
 
-        {/* Table */}
+        {/* Project List */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="overflow-x-auto">
+
+          {/* Mobile card view */}
+          <div className="block sm:hidden divide-y divide-slate-100">
+            {filteredProjects.length === 0 ? (
+              <div className="px-4 py-12 text-center text-slate-500">
+                <svg className="w-12 h-12 text-slate-300 mb-3 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <p className="text-sm">No projects found</p>
+              </div>
+            ) : filteredProjects.map(project => (
+              <div key={project.id} className="p-4 space-y-3">
+                <div className="flex gap-3 items-start">
+                  <div className="cursor-zoom-in shrink-0" onClick={() => setLightboxProject(project)}>
+                    <MediaPreview url={project.url} type={project.type} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{project.name}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{project.type}</p>
+                    <div className="mt-1">{getStatusBadge(project.status)}</div>
+                    {project.comment && <p className="text-xs text-red-500 mt-1 italic">"{project.comment}"</p>}
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {canReview && (
+                    <>
+                      {project.status !== 'Approved' && <button onClick={() => handleApprove(project.id)} className="px-3 py-1.5 text-xs font-medium text-green-600 border border-green-600 rounded-md hover:bg-green-600 hover:text-white transition-all">Approve</button>}
+                      {project.status !== 'Declined' && <button onClick={() => setDeclineTarget(project.id)} className="px-3 py-1.5 text-xs font-medium text-red-600 border border-red-600 rounded-md hover:bg-red-600 hover:text-white transition-all">Decline</button>}
+                    </>
+                  )}
+                  <button onClick={() => setCommentProject(project)} className="px-3 py-1.5 text-xs font-medium text-indigo-600 border border-indigo-300 rounded-md hover:bg-indigo-600 hover:text-white transition-all">Comments</button>
+                  {isAdmin && (
+                    <button onClick={() => handleDelete(project.id)} className="px-3 py-1.5 text-xs font-medium text-slate-500 border border-slate-300 rounded-md hover:bg-slate-600 hover:text-white transition-all">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop table view */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
@@ -579,10 +633,10 @@ function App() {
                       <td className="px-4 py-3">{getStatusBadge(project.status)}</td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2 flex-wrap">
-                          {canReview && project.status === 'Pending' && (
+                          {canReview && (
                             <>
-                              <button onClick={() => handleApprove(project.id)} className="px-3 py-1.5 text-xs font-medium text-green-600 border border-green-600 rounded-md hover:bg-green-600 hover:text-white transition-all">Approve</button>
-                              <button onClick={() => setDeclineTarget(project.id)} className="px-3 py-1.5 text-xs font-medium text-red-600 border border-red-600 rounded-md hover:bg-red-600 hover:text-white transition-all">Decline</button>
+                              {project.status !== 'Approved' && <button onClick={() => handleApprove(project.id)} className="px-3 py-1.5 text-xs font-medium text-green-600 border border-green-600 rounded-md hover:bg-green-600 hover:text-white transition-all">Approve</button>}
+                              {project.status !== 'Declined' && <button onClick={() => setDeclineTarget(project.id)} className="px-3 py-1.5 text-xs font-medium text-red-600 border border-red-600 rounded-md hover:bg-red-600 hover:text-white transition-all">Decline</button>}
                             </>
                           )}
                           <button onClick={() => setCommentProject(project)} className="px-3 py-1.5 text-xs font-medium text-indigo-600 border border-indigo-300 rounded-md hover:bg-indigo-600 hover:text-white transition-all">Comments</button>
