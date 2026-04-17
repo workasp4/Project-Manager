@@ -91,6 +91,108 @@ function ActivityLogPanel({ onClose }) {
   )
 }
 
+// ── User Activity Panel ───────────────────────────────────────────────────────
+function UserActivityPanel({ user, onClose }) {
+  const [logs, setLogs] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    supabase.from('activity_log')
+      .select('*')
+      .eq('performed_by', user.email)
+      .order('created_at', { ascending: false })
+      .limit(50)
+      .then(({ data }) => { setLogs(data ?? []); setLoading(false) })
+  }, [user.email])
+
+  const actionColor = (action) => {
+    if (action.includes('Approved')) return 'text-green-600 bg-green-50'
+    if (action.includes('Declined')) return 'text-red-600 bg-red-50'
+    if (action.includes('Deleted')) return 'text-slate-500 bg-slate-50'
+    return 'text-indigo-600 bg-indigo-50'
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-lg flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <div>
+            <h2 className="text-base font-semibold text-slate-800">User Activity</h2>
+            <p className="text-xs text-slate-500 mt-0.5 truncate">{user.email}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        {/* Summary */}
+        <div className="grid grid-cols-3 gap-3 px-5 py-3 border-b border-slate-100 bg-slate-50">
+          {[
+            { label: 'Total', value: logs.length, color: 'text-slate-700' },
+            { label: 'Approved', value: logs.filter(l => l.action.includes('Approved')).length, color: 'text-green-600' },
+            { label: 'Declined', value: logs.filter(l => l.action.includes('Declined')).length, color: 'text-red-500' },
+          ].map(s => (
+            <div key={s.label} className="text-center">
+              <p className={`text-xl font-semibold ${s.color}`}>{s.value}</p>
+              <p className="text-xs text-slate-400">{s.label}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+          {loading && <p className="text-sm text-slate-400 text-center">Loading...</p>}
+          {!loading && logs.length === 0 && <p className="text-sm text-slate-400 text-center py-6">No activity yet for this user.</p>}
+          {logs.map(log => (
+            <div key={log.id} className="flex items-start gap-3 py-2 border-b border-slate-100 last:border-0">
+              <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap mt-0.5 ${actionColor(log.action)}`}>{log.action}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-slate-800 truncate">{log.project_name}</p>
+                <p className="text-xs text-slate-400">{new Date(log.created_at).toLocaleString()}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Role Selector with Save button ───────────────────────────────────────────
+function RoleSelector({ user, onSave }) {
+  const [role, setRole] = useState(user.role)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const changed = role !== user.role
+
+  const handleSave = async () => {
+    setSaving(true)
+    await onSave(user.id, role)
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <select value={role} onChange={e => { setRole(e.target.value); setSaved(false) }}
+        className="px-2 py-1 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <option value="admin">Admin</option>
+        <option value="reviewer">Reviewer</option>
+        <option value="viewer">Viewer</option>
+      </select>
+      {changed && (
+        <button onClick={handleSave} disabled={saving}
+          className="px-2 py-1 text-xs font-medium bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-md transition-all whitespace-nowrap">
+          {saving ? '...' : 'Save'}
+        </button>
+      )}
+      {saved && !changed && (
+        <span className="text-xs text-green-500">✓</span>
+      )}
+    </div>
+  )
+}
+
 // ── User Management Panel (Admin only) ────────────────────────────────────────
 function UserManagementPanel({ onClose }) {
   const [users, setUsers] = useState([])
@@ -99,6 +201,7 @@ function UserManagementPanel({ onClose }) {
   const [newUser, setNewUser] = useState({ email: '', password: '', role: 'viewer' })
   const [formError, setFormError] = useState('')
   const [formSuccess, setFormSuccess] = useState('')
+  const [activityUser, setActivityUser] = useState(null)
 
   useEffect(() => { fetchUsers() }, [])
 
@@ -145,6 +248,7 @@ function UserManagementPanel({ onClose }) {
   }
 
   return (
+    <>
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40 p-4">
       <div className="bg-white rounded-xl shadow-lg w-full max-w-lg flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
@@ -201,13 +305,16 @@ function UserManagementPanel({ onClose }) {
           {!loading && users.length === 0 && <p className="text-sm text-slate-400 text-center py-4">No users yet.</p>}
           {users.map(u => (
             <div key={u.id} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
-              <p className="text-sm text-slate-700 truncate flex-1">{u.email}</p>
-              <select value={u.role} onChange={e => handleRoleChange(u.id, e.target.value)}
-                className="px-2 py-1 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <option value="admin">Admin</option>
-                <option value="reviewer">Reviewer</option>
-                <option value="viewer">Viewer</option>
-              </select>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-slate-700 truncate">{u.email}</p>
+              </div>
+              <button
+                onClick={() => setActivityUser(u)}
+                className="text-xs text-indigo-500 hover:text-indigo-700 border border-indigo-200 hover:border-indigo-400 px-2 py-1 rounded-md transition-all whitespace-nowrap"
+              >
+                Activity
+              </button>
+              <RoleSelector user={u} onSave={handleRoleChange} />
               <button onClick={() => handleDeleteUser(u.user_id, u.id)}
                 className="text-slate-300 hover:text-red-400 transition-colors shrink-0">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
@@ -221,6 +328,8 @@ function UserManagementPanel({ onClose }) {
         </div>
       </div>
     </div>
+    {activityUser && <UserActivityPanel user={activityUser} onClose={() => setActivityUser(null)} />}
+    </>
   )
 }
 
@@ -307,20 +416,47 @@ function Lightbox({ project, onClose }) {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
+
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="relative max-w-4xl w-full" onClick={e => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute -top-10 right-0 text-white/70 hover:text-white text-sm flex items-center gap-1">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          Close
-        </button>
-        <div className="bg-black rounded-xl overflow-hidden">
-          {project.type === 'Video'
-            ? <video src={project.url} controls autoPlay className="w-full max-h-[80vh]" />
-            : <img src={project.url} alt={project.name} className="w-full max-h-[80vh] object-contain" />}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8"
+      style={{ background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(12px)' }}
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-4xl rounded-2xl overflow-hidden shadow-2xl"
+        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3" style={{ background: 'rgba(255,255,255,0.08)' }}>
+          <div className="flex items-center gap-2">
+            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${project.type === 'Video' ? 'bg-indigo-500/30 text-indigo-200' : 'bg-emerald-500/30 text-emerald-200'}`}>
+              {project.type}
+            </span>
+            <p className="text-white/80 text-sm font-medium truncate max-w-[200px] sm:max-w-md">{project.name}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-all"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-        <p className="text-white/70 text-sm mt-3 text-center">{project.name}</p>
+
+        {/* Media */}
+        <div className="flex items-center justify-center p-4 sm:p-6" style={{ background: 'rgba(0,0,0,0.2)', minHeight: '200px' }}>
+          {project.type === 'Video'
+            ? <video src={project.url} controls autoPlay className="w-full max-h-[70vh] rounded-xl" />
+            : <img src={project.url} alt={project.name} className="max-w-full max-h-[70vh] object-contain rounded-xl" />
+          }
+        </div>
       </div>
+
+      {/* Hint */}
+      <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/30 text-xs">Press Esc or click outside to close</p>
     </div>
   )
 }
@@ -386,13 +522,17 @@ function StatsBar({ projects }) {
 function App() {
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
-  const [userRole, setUserRole] = useState('admin') // default to admin until role is fetched
+  const [userRole, setUserRole] = useState('viewer') // default to viewer until role is fetched
   const [projects, setProjects] = useState([])
   const [newProject, setNewProject] = useState({ name: '', type: 'Image' })
   const [selectedFile, setSelectedFile] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
+  const [monthFilter, setMonthFilter] = useState('All')
+  const [typeFilter, setTypeFilter] = useState('All')
+  const [currentPage, setCurrentPage] = useState(1)
+  const PAGE_SIZE = 10
   const [errors, setErrors] = useState({})
   const [declineTarget, setDeclineTarget] = useState(null)
   const [commentProject, setCommentProject] = useState(null)
@@ -404,6 +544,63 @@ function App() {
 
   const showToast = (message, type = 'success') => setToast({ message, type })
 
+  const compressImage = (file) => {
+    return new Promise((resolve) => {
+      // Skip compression for non-images
+      if (!file.type.startsWith('image/')) { resolve(file); return }
+
+      const MAX_WIDTH = 1280
+      const MAX_HEIGHT = 1280
+      const QUALITY = 0.75
+
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      img.onload = () => {
+        URL.revokeObjectURL(url)
+        let { width, height } = img
+
+        // Scale down if needed
+        if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+          const ratio = Math.min(MAX_WIDTH / width, MAX_HEIGHT / height)
+          width = Math.round(width * ratio)
+          height = Math.round(height * ratio)
+        }
+
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+
+        canvas.toBlob(
+          (blob) => resolve(new File([blob], file.name, { type: 'image/jpeg' })),
+          'image/jpeg',
+          QUALITY
+        )
+      }
+      img.src = url
+    })
+  }
+
+  const generateVideoThumbnail = (file) => {
+    return new Promise((resolve) => {
+      const video = document.createElement('video')
+      video.preload = 'metadata'
+      video.muted = true
+      video.playsInline = true
+      const url = URL.createObjectURL(file)
+      video.onloadeddata = () => { video.currentTime = Math.min(1, video.duration * 0.1) }
+      video.onseeked = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = 640
+        canvas.height = Math.round((video.videoHeight / video.videoWidth) * 640) || 360
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
+        URL.revokeObjectURL(url)
+        canvas.toBlob(blob => resolve(new File([blob], 'thumb.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.8)
+      }
+      video.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+      video.src = url
+    })
+  }
   const logActivity = async (action, project) => {
     await supabase.from('activity_log').insert([{
       project_id: project.id,
@@ -420,11 +617,14 @@ function App() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // Fetch role
+  // Fetch role — fall back to admin if no role row exists (first user / owner)
   useEffect(() => {
     if (!session) return
     supabase.from('user_roles').select('role').eq('user_id', session.user.id).single()
-      .then(({ data }) => { if (data) setUserRole(data.role) })
+      .then(({ data, error }) => {
+        if (data) setUserRole(data.role)
+        else if (error) setUserRole('admin') // no row = owner, give full access
+      })
   }, [session])
 
   // Fetch + realtime projects
@@ -477,19 +677,49 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!validateForm()) return
+
+    // Video size cap: 50MB
+    if (selectedFile.type.startsWith('video/') && selectedFile.size > 50 * 1024 * 1024) {
+      showToast('Video must be under 50MB', 'error')
+      return
+    }
+
     setUploading(true)
-    const ext = selectedFile.name.split('.').pop()
+    showToast('Processing...', 'info')
+
+    const isVideo = selectedFile.type.startsWith('video/')
+    const fileToUpload = await compressImage(selectedFile)
+    const originalKB = Math.round(selectedFile.size / 1024)
+    const compressedKB = Math.round(fileToUpload.size / 1024)
+
+    const ext = isVideo ? selectedFile.name.split('.').pop() : 'jpg'
     const filePath = `${Date.now()}.${ext}`
-    const { error: uploadError } = await supabase.storage.from('media').upload(filePath, selectedFile)
+    const { error: uploadError } = await supabase.storage.from('media').upload(filePath, fileToUpload)
     if (uploadError) { showToast('Upload failed: ' + uploadError.message, 'error'); setUploading(false); return }
     const { data: { publicUrl } } = supabase.storage.from('media').getPublicUrl(filePath)
+
+    // Generate + upload video thumbnail
+    let thumbnailUrl = null
+    if (isVideo) {
+      const thumbFile = await generateVideoThumbnail(selectedFile)
+      if (thumbFile) {
+        const thumbPath = `thumb_${Date.now()}.jpg`
+        const { error: thumbErr } = await supabase.storage.from('media').upload(thumbPath, thumbFile)
+        if (!thumbErr) {
+          const { data: { publicUrl: tUrl } } = supabase.storage.from('media').getPublicUrl(thumbPath)
+          thumbnailUrl = tUrl
+        }
+      }
+    }
+
     const { data, error } = await supabase.from('projects')
-      .insert([{ name: newProject.name.trim(), url: publicUrl, type: newProject.type, status: 'Pending' }]).select()
+      .insert([{ name: newProject.name.trim(), url: publicUrl, thumbnail_url: thumbnailUrl, type: newProject.type, status: 'Pending' }]).select()
     if (!error) {
       await logActivity('Added', data[0])
       setNewProject({ name: '', type: 'Image' }); setSelectedFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
-      showToast('Project added successfully')
+      const savings = !isVideo && originalKB > compressedKB ? ` (compressed ${originalKB}KB → ${compressedKB}KB)` : ''
+      showToast(`Project added${savings}`)
     } else { showToast('Failed to save project', 'error') }
     setUploading(false)
   }
@@ -534,17 +764,57 @@ function App() {
   const filteredProjects = projects.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus = statusFilter === 'All' || p.status === statusFilter
-    return matchesSearch && matchesStatus
+    const matchesType = typeFilter === 'All' || p.type === typeFilter
+    
+    let matchesMonth = true
+    if (monthFilter !== 'All') {
+      const projectDate = new Date(p.created_at)
+      const projectMonth = `${projectDate.getFullYear()}-${String(projectDate.getMonth() + 1).padStart(2, '0')}`
+      matchesMonth = projectMonth === monthFilter
+    }
+    
+    return matchesSearch && matchesStatus && matchesMonth && matchesType
   })
+
+  // Pagination
+  const totalPages = Math.ceil(filteredProjects.length / PAGE_SIZE)
+  const startIndex = (currentPage - 1) * PAGE_SIZE
+  const paginatedProjects = filteredProjects.slice(startIndex, startIndex + PAGE_SIZE)
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setCurrentPage(1) }, [searchQuery, statusFilter, monthFilter, typeFilter])
+
+  // Get unique months from projects for the dropdown
+  const availableMonths = [...new Set(projects.map(p => {
+    const d = new Date(p.created_at)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }))].sort().reverse()
 
   const getStatusBadge = (status) => {
     const styles = { Approved: 'bg-green-100 text-green-800', Declined: 'bg-red-100 text-red-800', Pending: 'bg-amber-100 text-amber-700' }
     return <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${styles[status]}`}>{status}</span>
   }
 
-  const MediaPreview = ({ url, type }) => (
-    <div className="w-20 h-14 rounded-lg bg-gray-100 overflow-hidden flex items-center justify-center">
-      {url ? <img src={url} alt={type} className="w-full h-full object-cover" /> : (
+  const MediaPreview = ({ url, type, thumbnailUrl }) => (
+    <div className="w-20 h-14 rounded-lg bg-gray-100 overflow-hidden flex items-center justify-center relative">
+      {type === 'Video' && thumbnailUrl ? (
+        <>
+          <img src={thumbnailUrl} alt="Video thumbnail" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+            <div className="w-6 h-6 rounded-full bg-white/80 flex items-center justify-center">
+              <svg className="w-3 h-3 text-slate-700 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+        </>
+      ) : type === 'Video' ? (
+        <div className="w-full h-full bg-slate-700 flex items-center justify-center">
+          <div className="w-6 h-6 rounded-full bg-white/80 flex items-center justify-center">
+            <svg className="w-3 h-3 text-slate-700 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </div>
+        </div>
+      ) : url ? (
+        <img src={url} alt={type} className="w-full h-full object-cover" />
+      ) : (
         <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
@@ -586,7 +856,8 @@ function App() {
 
         <StatsBar projects={projects} />
 
-        {/* Add Project Form — all roles can submit */}
+        {/* Add Project Form — admin only */}
+        {isAdmin && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5 mb-6">
           <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-end">
             <div className="md:col-span-1">
@@ -606,7 +877,7 @@ function App() {
               <label className="block text-sm font-medium text-slate-700 mb-1.5">Upload File</label>
               <div onDrop={handleDrop} onDragOver={e => e.preventDefault()} onClick={() => fileInputRef.current?.click()}
                 className={`w-full px-3 py-2.5 rounded-lg border-2 border-dashed cursor-pointer text-sm text-center transition-all ${errors.file ? 'border-red-400 bg-red-50' : 'border-slate-200 hover:border-indigo-400 hover:bg-indigo-50'} ${selectedFile ? 'border-indigo-400 bg-indigo-50' : ''}`}>
-                {selectedFile ? <span className="text-indigo-600 truncate block">{selectedFile.name}</span> : <span className="text-slate-400">Drop or click to upload</span>}
+                {selectedFile ? <span className="text-indigo-600 truncate block">{selectedFile.name} <span className="text-indigo-400">({Math.round(selectedFile.size / 1024)}KB)</span></span> : <span className="text-slate-400">Drop or click to upload</span>}
               </div>
               <input ref={fileInputRef} type="file" accept="image/*,video/*" onChange={handleFileChange} className="hidden" />
               {errors.file && <p className="text-red-500 text-xs mt-1">{errors.file}</p>}
@@ -618,6 +889,7 @@ function App() {
             </div>
           </form>
         </div>
+        )}
 
         {/* Filters */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
@@ -632,6 +904,19 @@ function App() {
               <option value="Approved">Approved</option>
               <option value="Declined">Declined</option>
             </select>
+            <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="px-3 py-2.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white min-w-[120px]">
+              <option value="All">All Types</option>
+              <option value="Image">Image</option>
+              <option value="Video">Video</option>
+            </select>
+            <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)} className="px-3 py-2.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white min-w-[140px]">
+              <option value="All">All Months</option>
+              {availableMonths.map(m => {
+                const [year, month] = m.split('-')
+                const label = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' })
+                return <option key={m} value={m}>{label}</option>
+              })}
+            </select>
             <button onClick={handleExportPDF} className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-medium text-sm transition-all whitespace-nowrap">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
               Export PDF
@@ -644,16 +929,16 @@ function App() {
 
           {/* Mobile card view */}
           <div className="block sm:hidden divide-y divide-slate-100">
-            {filteredProjects.length === 0 ? (
+            {paginatedProjects.length === 0 ? (
               <div className="px-4 py-12 text-center text-slate-500">
                 <svg className="w-12 h-12 text-slate-300 mb-3 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                 <p className="text-sm">No projects found</p>
               </div>
-            ) : filteredProjects.map(project => (
+            ) : paginatedProjects.map(project => (
               <div key={project.id} className="p-4 space-y-3">
                 <div className="flex gap-3 items-start">
                   <div className="cursor-zoom-in shrink-0" onClick={() => setLightboxProject(project)}>
-                    <MediaPreview url={project.url} type={project.type} />
+                    <MediaPreview url={project.url} type={project.type} thumbnailUrl={project.thumbnail_url} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-slate-800 truncate">{project.name}</p>
@@ -702,11 +987,11 @@ function App() {
                     </div>
                   </td></tr>
                 ) : (
-                  filteredProjects.map((project) => (
+                  paginatedProjects.map((project) => (
                     <tr key={project.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3">
                         <div className="cursor-zoom-in" onClick={() => setLightboxProject(project)}>
-                          <MediaPreview url={project.url} type={project.type} />
+                          <MediaPreview url={project.url} type={project.type} thumbnailUrl={project.thumbnail_url} />
                         </div>
                       </td>
                       <td className="px-4 py-3 max-w-[200px]">
@@ -738,6 +1023,45 @@ function App() {
             </table>
           </div>
         </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-4 px-1">
+            <p className="text-xs text-slate-500">
+              Showing {startIndex + 1}–{Math.min(startIndex + PAGE_SIZE, filteredProjects.length)} of {filteredProjects.length} projects
+            </p>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                Prev
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+                .reduce((acc, p, idx, arr) => {
+                  if (idx > 0 && p - arr[idx - 1] > 1) acc.push('...')
+                  acc.push(p)
+                  return acc
+                }, [])
+                .map((p, idx) => p === '...'
+                  ? <span key={`ellipsis-${idx}`} className="px-2 text-xs text-slate-400">…</span>
+                  : <button key={p} onClick={() => setCurrentPage(p)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${currentPage === p ? 'bg-indigo-500 text-white border-indigo-500' : 'text-slate-600 border-slate-300 hover:bg-slate-100'}`}>
+                      {p}
+                    </button>
+                )}
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
