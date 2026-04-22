@@ -461,6 +461,194 @@ function Lightbox({ project, onClose }) {
   )
 }
 
+// ── Project Detail / Gallery Panel ───────────────────────────────────────────
+function ProjectDetailPanel({ project, canReview, isAdmin, onApprove, onDecline, onDelete, onClose, currentUser, userRole }) {
+  const [assets, setAssets] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [lightboxAsset, setLightboxAsset] = useState(null)
+
+  useEffect(() => {
+    fetchAssets()
+    const channel = supabase.channel(`assets:${project.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'project_assets', filter: `project_id=eq.${project.id}` },
+        payload => setAssets(prev => [...prev, payload.new]))
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'project_assets', filter: `project_id=eq.${project.id}` },
+        payload => setAssets(prev => prev.filter(a => a.id !== payload.old.id)))
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [project.id])
+
+  const fetchAssets = async () => {
+    const { data } = await supabase.from('project_assets').select('*').eq('project_id', project.id).order('created_at', { ascending: true })
+    // Fall back to project's own url if no assets yet
+    if (data && data.length > 0) setAssets(data)
+    else setAssets([{ id: 'legacy', url: project.url, thumbnail_url: project.thumbnail_url, type: project.type }])
+    setLoading(false)
+  }
+
+  const handleDownloadAsset = async (url, name, idx) => {
+    try {
+      const res = await fetch(url)
+      const blob = await res.blob()
+      const ext = url.split('.').pop().split('?')[0]
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `${name}-${idx + 1}.${ext}`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch {
+      // fallback: open in new tab
+      window.open(url, '_blank')
+    }
+  }
+
+  const handleDownloadAll = async () => {
+    for (let i = 0; i < assets.length; i++) {
+      await handleDownloadAsset(assets[i].url, project.name, i)
+      await new Promise(r => setTimeout(r, 400))
+    }
+  }
+
+  const handleDeleteAsset = async (assetId) => {
+    if (assetId === 'legacy') return
+    await supabase.from('project_assets').delete().eq('id', assetId)
+  }
+
+  const getStatusBadge = (status) => {
+    const styles = { Approved: 'bg-green-100 text-green-800', Declined: 'bg-red-100 text-red-800', Pending: 'bg-amber-100 text-amber-700' }
+    return <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${styles[status]}`}>{status}</span>
+  }
+
+  return (
+    <>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40 p-4">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl flex flex-col max-h-[90vh]">
+
+        {/* Header */}
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-200">
+          <div>
+            <h2 className="text-base font-semibold text-slate-800">{project.name}</h2>
+            <div className="flex items-center gap-2 mt-1">
+              {getStatusBadge(project.status)}
+              <span className="text-xs text-slate-400">{project.type}</span>
+              <span className="text-xs text-slate-400">· {new Date(project.created_at).toLocaleDateString()}</span>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 mt-0.5">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        {/* Gallery */}
+        <div className="flex-1 overflow-y-auto p-5">
+          {loading ? (
+            <p className="text-sm text-slate-400 text-center py-8">Loading assets...</p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {assets.map((asset, idx) => (
+                <div key={asset.id} className="group relative rounded-xl overflow-hidden bg-slate-100 aspect-video">
+                  {asset.type === 'Video' ? (
+                    <>
+                      {asset.thumbnail_url
+                        ? <img src={asset.thumbnail_url} alt="Video" className="w-full h-full object-cover" />
+                        : <div className="w-full h-full bg-slate-700 flex items-center justify-center">
+                            <svg className="w-8 h-8 text-white/50" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                          </div>
+                      }
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                        <div className="w-8 h-8 rounded-full bg-white/80 flex items-center justify-center">
+                          <svg className="w-4 h-4 text-slate-700 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <img src={asset.url} alt={`Asset ${idx + 1}`} className="w-full h-full object-cover" />
+                  )}
+
+                  {/* Always-visible action bar at bottom */}
+                  <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-2 py-1.5 bg-gradient-to-t from-black/60 to-transparent">
+                    <span className="text-white/70 text-xs">{idx + 1}/{assets.length}</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setLightboxAsset(asset)}
+                        className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/40 flex items-center justify-center text-white transition-all"
+                        title="Preview"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                      </button>
+                      <button
+                        onClick={() => handleDownloadAsset(asset.url, project.name, idx)}
+                        className="w-7 h-7 rounded-full bg-white/20 hover:bg-indigo-500 flex items-center justify-center text-white transition-all"
+                        title="Download"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                      </button>
+                      {isAdmin && asset.id !== 'legacy' && (
+                        <button
+                          onClick={() => handleDeleteAsset(asset.id)}
+                          className="w-7 h-7 rounded-full bg-white/20 hover:bg-red-500 flex items-center justify-center text-white transition-all"
+                          title="Delete"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {project.comment && (
+            <div className="mt-4 p-3 bg-red-50 rounded-lg border border-red-100">
+              <p className="text-xs font-medium text-red-600 mb-0.5">Decline reason</p>
+              <p className="text-sm text-red-700 italic">"{project.comment}"</p>
+            </div>
+          )}
+        </div>
+
+        {/* Actions footer */}
+        <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <p className="text-xs text-slate-400">{assets.length} asset{assets.length !== 1 ? 's' : ''}</p>
+            <button
+              onClick={handleDownloadAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100 transition-all"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+              Download All
+            </button>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {canReview && (
+              <>
+                {project.status !== 'Approved' && (
+                  <button onClick={() => { onApprove(project.id); onClose() }} className="px-4 py-2 text-sm font-medium text-green-600 border border-green-600 rounded-lg hover:bg-green-600 hover:text-white transition-all">Approve</button>
+                )}
+                {project.status !== 'Declined' && (
+                  <button onClick={() => { onDecline(project.id); onClose() }} className="px-4 py-2 text-sm font-medium text-red-600 border border-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all">Decline</button>
+                )}
+              </>
+            )}
+            {isAdmin && (
+              <button onClick={() => { onDelete(project.id); onClose() }} className="px-4 py-2 text-sm font-medium text-slate-500 border border-slate-300 rounded-lg hover:bg-slate-600 hover:text-white transition-all">Delete</button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* Asset lightbox */}
+    {lightboxAsset && (
+      <Lightbox
+        project={{ name: project.name, type: lightboxAsset.type, url: lightboxAsset.url }}
+        onClose={() => setLightboxAsset(null)}
+      />
+    )}
+    </>
+  )
+}
+
 // ── Login ─────────────────────────────────────────────────────────────────────
 function LoginPage() {
   const [credentials, setCredentials] = useState({ email: '', password: '' })
@@ -537,6 +725,7 @@ function App() {
   const [declineTarget, setDeclineTarget] = useState(null)
   const [commentProject, setCommentProject] = useState(null)
   const [lightboxProject, setLightboxProject] = useState(null)
+  const [detailProject, setDetailProject] = useState(null)
   const [showActivityLog, setShowActivityLog] = useState(false)
   const [showUserMgmt, setShowUserMgmt] = useState(false)
   const [toast, setToast] = useState(null)
@@ -620,10 +809,10 @@ function App() {
   // Fetch role — fall back to admin if no role row exists (first user / owner)
   useEffect(() => {
     if (!session) return
-    supabase.from('user_roles').select('role').eq('user_id', session.user.id).single()
+    supabase.from('user_roles').select('role').eq('user_id', session.user.id).maybeSingle()
       .then(({ data, error }) => {
         if (data) setUserRole(data.role)
-        else if (error) setUserRole('admin') // no row = owner, give full access
+        else setUserRole('admin') // no row = owner, give full access
       })
   }, [session])
 
@@ -716,6 +905,10 @@ function App() {
       .insert([{ name: newProject.name.trim(), url: publicUrl, thumbnail_url: thumbnailUrl, type: newProject.type, status: 'Pending' }]).select()
     if (!error) {
       await logActivity('Added', data[0])
+      // Also save to project_assets for gallery support
+      await supabase.from('project_assets').insert([{
+        project_id: data[0].id, url: publicUrl, thumbnail_url: thumbnailUrl, type: newProject.type
+      }])
       setNewProject({ name: '', type: 'Image' }); setSelectedFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
       const savings = !isVideo && originalKB > compressedKB ? ` (compressed ${originalKB}KB → ${compressedKB}KB)` : ''
@@ -834,6 +1027,19 @@ function App() {
       {declineTarget && <DeclineModal onConfirm={handleDeclineConfirm} onCancel={() => setDeclineTarget(null)} />}
       {commentProject && <CommentsPanel project={commentProject} currentUser={session.user.email} userRole={userRole} onClose={() => setCommentProject(null)} />}
       {lightboxProject && <Lightbox project={lightboxProject} onClose={() => setLightboxProject(null)} />}
+      {detailProject && (
+        <ProjectDetailPanel
+          project={detailProject}
+          canReview={canReview}
+          isAdmin={isAdmin}
+          onApprove={handleApprove}
+          onDecline={(id) => setDeclineTarget(id)}
+          onDelete={handleDelete}
+          onClose={() => setDetailProject(null)}
+          currentUser={session.user.email}
+          userRole={userRole}
+        />
+      )}
       {showActivityLog && <ActivityLogPanel onClose={() => setShowActivityLog(false)} />}
       {showUserMgmt && <UserManagementPanel onClose={() => setShowUserMgmt(false)} />}
 
@@ -941,7 +1147,10 @@ function App() {
                     <MediaPreview url={project.url} type={project.type} thumbnailUrl={project.thumbnail_url} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-800 truncate">{project.name}</p>
+                    <p
+                      className="text-sm font-medium text-slate-800 truncate cursor-pointer hover:text-indigo-600 transition-colors"
+                      onClick={() => setDetailProject(project)}
+                    >{project.name}</p>
                     <p className="text-xs text-slate-500 mt-0.5">{project.type}</p>
                     <div className="mt-1">{getStatusBadge(project.status)}</div>
                     {project.comment && <p className="text-xs text-red-500 mt-1 italic">"{project.comment}"</p>}
@@ -995,7 +1204,10 @@ function App() {
                         </div>
                       </td>
                       <td className="px-4 py-3 max-w-[200px]">
-                        <span className="text-sm text-slate-800 font-medium line-clamp-1">{project.name}</span>
+                        <span
+                          className="text-sm text-slate-800 font-medium line-clamp-1 cursor-pointer hover:text-indigo-600 transition-colors"
+                          onClick={() => setDetailProject(project)}
+                        >{project.name}</span>
                         {project.comment && <p className="text-xs text-red-500 mt-0.5 line-clamp-2 italic">"{project.comment}"</p>}
                       </td>
                       <td className="px-4 py-3"><span className="text-sm text-slate-600">{project.type}</span></td>
